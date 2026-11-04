@@ -78,7 +78,7 @@ li{margin:5px 0;font-size:14px}ol{padding-left:20px;margin:4px 0}.hide{display:n
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth,signInAnonymously} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {getFirestore,doc,getDoc,setDoc,updateDoc,onSnapshot,collection,deleteField} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {getFirestore,doc,getDoc,getDocFromServer,setDoc,updateDoc,onSnapshot,collection,deleteField} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 // ВСТАВЬТЕ СЮДА СВОЙ КОНФИГ ИЗ FIREBASE (Project settings → Your apps → Web)
 const firebaseConfig={apiKey:"AIzaSyALKxkssil6GsliCSI0WbvHrzgfOeti5us",authDomain:"night-19721.firebaseapp.com",projectId:"night-19721",appId:"1:255883190089:web:283a07ee42f2713c99c498"};
@@ -119,7 +119,7 @@ $("#join").onclick=async()=>{const c=$("#code").value.trim().toUpperCase(),w=who
   enter(c)}catch(e){err("Не удалось войти: "+e.code)}};
 function enter(c){code=c;show("room");$("#rc").textContent=c;
  subs.push(onSnapshot(doc(db,"rooms",c),s=>{room=s.data();if(!room)return;if(room.host==uid&&!G&&room.game&&!room.game.over)err("Хост перезагрузил страницу — раздача прервана, начните новую");draw()}));
- subs.push(onSnapshot(doc(db,"rooms",c,"hands",uid),s=>{hand=s.exists()?s.data():null;draw()}));
+ subs.push(onSnapshot(doc(db,"rooms",c,"hands",uid),s=>{hand=s.exists()?s.data():null;draw()},e=>err("Нет доступа к картам: "+e.code)));
  subs.push(onSnapshot(collection(db,"rooms",c,"actions"),sn=>{sn.docChanges().forEach(ch=>{const a=ch.doc.data(),u=ch.doc.id;if(room&&room.host==uid&&G&&done[u]!==a.n){done[u]=a.n;handle(u,a)}})}))}
 $("#leave").onclick=async()=>{subs.forEach(f=>f());subs=[];try{await updateDoc(doc(db,"rooms",code),{["players."+uid]:deleteField()})}catch(e){}room=null;G=null;show("lobby")};
 $("#copy").onclick=()=>{try{navigator.clipboard.writeText(code);$("#copy").textContent="Скопировано"}catch(e){}};
@@ -153,6 +153,10 @@ function handle(u,a){const g=G.pub;if(g.over||u!==g.turn||a.seq!==g.seq)return;c
  push()}
 const send=t=>setDoc(doc(db,"rooms",code,"actions",uid),{t,amt:+$("#amt").value||0,seq:room.game.seq,n:Date.now()});
 $("#fold").onclick=()=>send("fold");$("#call").onclick=()=>send("call");$("#raise").onclick=()=>send("raise");
+// ---------- догрузка карт, если пришли с задержкой ----------
+const tr={};let ft=0;
+function fetchHand(h){if(ft||(tr[h]=(tr[h]||0)+1)>6)return;
+ ft=setTimeout(async()=>{ft=0;try{const s=await getDocFromServer(doc(db,"rooms",code,"hands",uid));if(s.exists()&&s.data().hand==h){hand=s.data();draw()}else fetchHand(h)}catch(e){fetchHand(h)}},tr[h]*600)}
 // ---------- отрисовка ----------
 const rk=r=>r<=10?r:"JQKA"[r-11],SU="♣♦♥♠";
 const cd=c=>{const e=document.createElement("div"),x=C(c);e.className="pc"+(x.s==1||x.s==2?" red":"");e.textContent=rk(x.r)+SU[x.s];return e};
@@ -162,7 +166,8 @@ function draw(){if(!room)return;const g=room.game,isH=room.host==uid,ps=room.pla
  $("#msg").textContent=g?g.msg||"":"Ждём игроков: "+list.length;
  const bd=$("#board");bd.innerHTML="";for(let i=0;i<5;i++){if(g&&g.board[i]!=null)bd.append(cd(g.board[i]));else{const e=document.createElement("div");e.className="pc e";bd.append(e)}}
  const box=$("#seats");box.innerHTML="";const all=g?g.seats:list;
- all.forEach((id,i)=>{const p=ps[id]||{name:"—"},a=Math.PI/2+i*2*Math.PI/all.length,e=document.createElement("div");
+ const mi=Math.max(0,all.indexOf(uid));
+ all.forEach((id,i)=>{const p=ps[id]||{name:"—"},a=Math.PI/2+((i-mi+all.length)%all.length)*2*Math.PI/all.length,e=document.createElement("div");
   e.className="seat"+(id==uid?" me":"")+(g&&g.turn==id?" turn":"")+(g&&g.folded[id]?" f":"");e.style.left=50+45*Math.cos(a)+"%";e.style.top=50+45*Math.sin(a)+"%";
   const av=document.createElement("div");av.className="av";av.textContent=(p.name[0]||"?").toUpperCase();
   const n=document.createElement("div");n.className="n";n.textContent=p.name+(room.host==id?" ★":"")+(g&&g.seats[g.di]==id?" Ⓓ":"");
@@ -170,7 +175,9 @@ function draw(){if(!room)return;const g=room.game,isH=room.host==uid,ps=room.pla
   if(g&&g.bet[id]){const b=document.createElement("div");b.className="b";b.textContent="ставка "+g.bet[id];e.append(b)}
   if(g&&g.shown&&g.shown[id]){const r=document.createElement("div");r.style.cssText="display:flex;gap:2px;justify-content:center";g.shown[id].forEach(c=>r.append(cd(c)));e.append(r)}
   box.append(e)});
- const m=$("#mine");m.innerHTML="";if(g&&hand&&hand.hand==g.hand&&g.seats.includes(uid))hand.cards.forEach(c=>m.append(cd(c)));
+ const m=$("#mine");m.innerHTML="";
+ if(g&&g.seats.includes(uid)){if(hand&&hand.hand==g.hand)hand.cards.forEach(c=>m.append(cd(c)));
+  else{for(let i=0;i<2;i++){const b=document.createElement("div");b.className="pc back";m.append(b)}fetchHand(g.hand)}}
  const my=g&&g.turn==uid;$("#bar").classList.toggle("hide",!my);
  if(my){const to=g.cur-(g.bet[uid]||0);$("#call").textContent=to?"Call "+Math.min(to,g.stack[uid]):"Check";$("#amt").placeholder="Рейз до (мин "+(g.cur+g.minRaise)+")"}
  $("#deal").classList.toggle("hide",!isH||(g&&!g.over));$("#deal").textContent=g?"Следующая раздача":"Раздать карты";
