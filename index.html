@@ -52,6 +52,7 @@ input[type=range]{padding:0;height:36px;accent-color:#e3b95c;background:none;bor
 <div class="tabs" id="tabs"><button data-t="lobby" class="on">Лобби</button><button data-t="rules">Правила</button></div>
 
 <section id="lobby">
+ <div class="card hide" id="back"><h2>Вы уже за столом</h2><button class="btn" id="rejoin" style="margin-top:0">Вернуться в комнату <span id="bc"></span></button></div>
  <div class="card"><label style="margin-top:0">Ваше имя</label><input id="name" maxlength="14" placeholder="Как вас называть?"></div>
  <div class="card"><h2>Создать комнату</h2><label style="margin-top:0">Блайнды (SB / BB)</label><div class="chips" id="blinds"></div>
   <label>Ваш стек</label><input id="stackC" type="number" inputmode="numeric" placeholder="Например, 2000">
@@ -65,11 +66,13 @@ input[type=range]{padding:0;height:36px;accent-color:#e3b95c;background:none;bor
  <div class="card codebox"><div><small style="color:var(--mut)">Код комнаты</small><br><b id="rc"></b></div><button class="btn g" id="copy" style="width:auto;margin:0;padding:10px 14px">Копировать</button></div>
  <div class="table"><div class="felt"><div class="pot" id="pot"></div><div class="board" id="board"></div><div class="msg" id="msg"></div></div><div id="seats"></div></div>
  <div class="mine" id="mine"></div>
+ <div class="row"><input id="tu" type="number" inputmode="numeric" placeholder="Докупить стек"><button class="btn g" id="tub" style="width:46%">Докупить</button></div>
  <div id="bar" class="hide"><div class="row"><button class="btn r" id="fold">Fold</button><button class="btn g" id="call">Call</button></div>
   <div class="lever"><div class="lv"><span id="lmin"></span><b id="lval"></b><span id="lmax"></span></div><input id="amt" type="range"></div>
   <div class="row"><button class="btn" id="raise">Raise</button><button class="btn a" id="allin">All-in</button></div></div>
  <button class="btn" id="deal">Раздать карты</button>
- <button class="btn g" id="leave">Покинуть комнату</button>
+ <button class="btn g" id="leave">В лобби (место сохранится)</button>
+ <button class="btn g" id="quit" style="color:var(--red)">Покинуть стол навсегда</button>
 </section>
 
 <section id="rules" class="hide">
@@ -86,7 +89,7 @@ input[type=range]{padding:0;height:36px;accent-color:#e3b95c;background:none;bor
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth,signInAnonymously} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {getFirestore,doc,getDoc,getDocFromServer,setDoc,updateDoc,onSnapshot,collection,deleteField} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {getFirestore,doc,getDoc,getDocFromServer,setDoc,updateDoc,onSnapshot,collection,deleteField,increment} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 // ВСТАВЬТЕ СЮДА СВОЙ КОНФИГ ИЗ FIREBASE (Project settings → Your apps → Web)
 const firebaseConfig={apiKey:"AIzaSyALKxkssil6GsliCSI0WbvHrzgfOeti5us",authDomain:"night-19721.firebaseapp.com",projectId:"night-19721",appId:"1:255883190089:web:283a07ee42f2713c99c498"};
@@ -100,7 +103,7 @@ let app,au,db;try{app=initializeApp(firebaseConfig);au=getAuth(app);db=getFirest
 try{$("#name").value=localStorage.getItem("pn")||(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user&&tg.initDataUnsafe.user.first_name)||""}catch(e){}
 function show(id){["lobby","room","rules"].forEach(x=>$("#"+x).classList.toggle("hide",x!=id));$("#tabs").classList.toggle("hide",id=="room");document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.t==id))}
 document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>show(b.dataset.t));
-(au?signInAnonymously(au):Promise.reject()).then(r=>uid=r.user.uid).catch(()=>err("Не удалось войти в Firebase: проверьте конфиг и включите Anonymous Auth"));
+(au?signInAnonymously(au):Promise.reject()).then(r=>{uid=r.user.uid;checkBack(true)}).catch(()=>err("Не удалось войти в Firebase: проверьте конфиг и включите Anonymous Auth"));
 
 // ---------- честная колода: криптографический RNG, без смещения ----------
 function rnd(n){const m=Math.floor(2**32/n)*n;let x;do{x=crypto.getRandomValues(new Uint32Array(1))[0]}while(x>=m);return x%n}
@@ -125,23 +128,33 @@ $("#join").onclick=async()=>{const c=$("#code").value.trim().toUpperCase(),w=who
  try{const r=doc(db,"rooms",c),s=await getDoc(r);if(!s.exists())return err("Комната не найдена");const d=s.data();
   if(!d.players[uid]){if(Object.keys(d.players).length>=9)return err("Комната заполнена (макс. 9)");if(w.stack<d.bb*10)return err("Стек не меньше 10 BB ("+d.bb*10+")");await updateDoc(r,{["players."+uid]:w})}
   enter(c)}catch(e){err("Не удалось войти: "+e.code)}};
-function enter(c){code=c;seen.clear();show("room");$("#rc").textContent=c;
- subs.push(onSnapshot(doc(db,"rooms",c),s=>{room=s.data();if(!room)return;if(room.host==uid&&!G&&room.game&&!room.game.over)err("Хост перезагрузил страницу — раздача прервана, начните новую");draw()}));
+function enter(c){code=c;seen.clear();try{localStorage.setItem("pr",c)}catch(e){}$("#back").classList.add("hide");show("room");$("#rc").textContent=c;
+ subs.push(onSnapshot(doc(db,"rooms",c),s=>{room=s.data();if(!room)return;
+  if(room.host==uid&&!G&&room.game){try{const r=JSON.parse(localStorage.getItem("hg")||"null");if(r&&r.code==c&&r.G&&r.G.pub.hand==room.game.hand&&r.G.pub.seq==room.game.seq){G=r.G;err()}}catch(e){}}
+  if(room.host==uid&&!G&&room.game&&!room.game.over)err("Не удалось восстановить раздачу хоста — начните новую");
+  draw();
+  if(room.host==uid&&G&&G.pub&&!G.pub.over&&G.pub.turn&&!room.players[G.pub.turn])handle(G.pub.turn,{t:"fold",seq:G.pub.seq})}));
  subs.push(onSnapshot(doc(db,"rooms",c,"hands",uid),s=>{hand=s.exists()?s.data():null;draw()},e=>err("Нет доступа к картам: "+e.code)));
  subs.push(onSnapshot(collection(db,"rooms",c,"actions"),sn=>{sn.docChanges().forEach(ch=>{const a=ch.doc.data(),u=ch.doc.id;if(room&&room.host==uid&&G&&done[u]!==a.n){done[u]=a.n;handle(u,a)}})}))}
-$("#leave").onclick=async()=>{subs.forEach(f=>f());subs=[];try{await updateDoc(doc(db,"rooms",code),{["players."+uid]:deleteField()})}catch(e){}room=null;G=null;show("lobby")};
+function leaveUI(){subs.forEach(f=>f());subs=[];room=null;hand=null;show("lobby");checkBack(false)}
+$("#leave").onclick=leaveUI;
+$("#quit").onclick=async()=>{const c=code;try{localStorage.removeItem("pr")}catch(e){}leaveUI();try{await updateDoc(doc(db,"rooms",c),{["players."+uid]:deleteField()})}catch(e){}};
+$("#rejoin").onclick=()=>{try{enter(localStorage.getItem("pr"))}catch(e){}};
+async function checkBack(auto){let c=null;try{c=localStorage.getItem("pr")}catch(e){}const b=$("#back");if(!c||!uid||!db)return b.classList.add("hide");
+ try{const s=await getDoc(doc(db,"rooms",c));if(s.exists()&&s.data().players&&s.data().players[uid]){if(auto)return enter(c);$("#bc").textContent=c;b.classList.remove("hide")}else{localStorage.removeItem("pr");b.classList.add("hide")}}catch(e){}}
 $("#copy").onclick=()=>{try{navigator.clipboard.writeText(code);$("#copy").textContent="Скопировано"}catch(e){}};
 // ---------- движок (выполняется у хоста) ----------
 const pay=(g,u,x)=>{x=Math.min(x,g.stack[u]);g.stack[u]-=x;g.bet[u]=(g.bet[u]||0)+x};
-const push=()=>updateDoc(doc(db,"rooms",code),{game:G.pub});
+const push=()=>{try{localStorage.setItem("hg",JSON.stringify({code,G}))}catch(e){}return updateDoc(doc(db,"rooms",code),{game:G.pub})};
 $("#deal").onclick=async()=>{const d=room,ps=Object.entries(d.players).sort((a,b)=>a[1].t-b[1].t).map(x=>x[0]),pv=d.game||{},st={};
  ps.forEach(u=>st[u]=pv.stack&&pv.stack[u]!=null?pv.stack[u]:d.players[u].stack);
+ const adds={};ps.forEach(u=>{const a=d.players[u].add||0;if(a>0){st[u]+=a;adds[u]=a}});
  const seats=ps.filter(u=>st[u]>=d.bb),n=seats.length;if(n<2)return err("Нужно минимум 2 игрока со стеком не меньше BB");err();
  const di=((pv.di??-1)+1)%n,hu=n==2,sbI=hu?di:(di+1)%n,bbI=hu?(di+1)%2:(di+2)%n,first=hu?sbI:(di+3)%n;
  const deck=newDeck(),hole={};seats.forEach(u=>hole[u]=[deck.pop(),deck.pop()]);
  const g={hand:(pv.hand||0)+1,seq:0,seats,di,stack:st,bet:{},folded:{},acted:{},cur:d.bb,minRaise:d.bb,pot:0,board:[],stage:"pre",bb:d.bb,turn:seats[first],over:false,shown:null,msg:"Новая раздача"};
  pay(g,seats[sbI],d.sb);pay(g,seats[bbI],d.bb);G={pub:g,deck,hole};
- await Promise.all(seats.map(u=>setDoc(doc(db,"rooms",code,"hands",u),{hand:g.hand,cards:hole[u]})));await push()};
+ await Promise.all(seats.map(u=>setDoc(doc(db,"rooms",code,"hands",u),{hand:g.hand,cards:hole[u]})));await push();Object.entries(adds).forEach(([u,a])=>updateDoc(doc(db,"rooms",code),{["players."+u+".add"]:increment(-a)}))};
 function end(g,ws,txt){const P=g.pot,sh=Math.floor(P/ws.length);ws.forEach((w,i)=>g.stack[w]+=sh+(i==0?P-sh*ws.length:0));g.pot=0;g.over=true;g.stage="show";g.turn=null;g.msg=txt+" · банк "+P}
 function showdown(g){const act=g.seats.filter(u=>!g.folded[u]),sc={};act.forEach(u=>sc[u]=best([...G.hole[u],...g.board]));
  let b=null;act.forEach(u=>{if(!b||cmp(sc[u],b)>0)b=sc[u]});const ws=act.filter(u=>cmp(sc[u],b)==0);g.shown={};act.forEach(u=>g.shown[u]=G.hole[u]);
@@ -161,6 +174,8 @@ function handle(u,a){const g=G.pub;if(g.over||u!==g.turn||a.seq!==g.seq)return;c
  push()}
 const send=(t,amt)=>setDoc(doc(db,"rooms",code,"actions",uid),{t,amt:amt??(+$("#amt").value||0),seq:room.game.seq,n:Date.now()});
 $("#fold").onclick=()=>send("fold");$("#call").onclick=()=>send("call");$("#raise").onclick=()=>send("raise");$("#allin").onclick=()=>send("raise",1e9);
+$("#tub").onclick=async()=>{const a=Math.floor(+$("#tu").value);if(!(a>0)||a>1e6)return err("Введите сумму докупки");
+ try{const mid=!!(room&&room.game);await updateDoc(doc(db,"rooms",code),{["players."+uid+"."+(mid?"add":"stack")]:increment(a)});$("#tu").value="";err(mid?"Докупка +"+a+" добавится в начале следующей раздачи":"Стек увеличен на "+a)}catch(e){err("Не удалось докупить: "+e.code)}};
 $("#amt").oninput=()=>$("#lval").textContent="Рейз до "+$("#amt").value;
 // ---------- догрузка карт, если пришли с задержкой ----------
 const tr={};let ft=0;
@@ -185,7 +200,7 @@ function draw(){if(!room)return;const g=room.game,isH=room.host==uid,ps=room.pla
   e.className="seat"+(id==uid?" me":"")+(g&&g.turn==id?" turn":"")+(g&&g.folded[id]?" f":"");e.style.left=50+45*Math.cos(a)+"%";e.style.top=50+45*Math.sin(a)+"%";
   const av=document.createElement("div");av.className="av";av.textContent=(p.name[0]||"?").toUpperCase();
   const n=document.createElement("div");n.className="n";n.textContent=p.name+(room.host==id?" ★":"")+(g&&g.seats[g.di]==id?" Ⓓ":"");
-  const s=document.createElement("div");s.className="s";s.textContent=g?(g.stack[id]??0):p.stack;e.append(av,n,s);
+  const s=document.createElement("div");s.className="s";s.textContent=(g?(g.stack[id]??0):p.stack)+(p.add?" (+"+p.add+")":"");e.append(av,n,s);
   if(g&&g.bet[id]){const b=document.createElement("div");b.className="b";b.textContent="ставка "+g.bet[id];e.append(b)}
   if(g&&g.shown&&g.shown[id]&&id!=uid){const r=document.createElement("div");r.style.cssText="display:flex;gap:2px;justify-content:center";g.shown[id].forEach((c,i)=>r.append(cd(c,"s"+g.hand+"-"+id+"-"+i,after+i*.12)));e.append(r)}
   box.append(e)});
