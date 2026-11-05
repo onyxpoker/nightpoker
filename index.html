@@ -41,6 +41,7 @@ input:focus{border-color:var(--gold)}input.code{text-align:center;letter-spacing
 .rank{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}.rank i{color:var(--mut);font-style:normal}
 li{margin:5px 0;font-size:14px}ol{padding-left:20px;margin:4px 0}.hide{display:none}
 @keyframes flip{0%{transform:rotateY(90deg) translateY(-14px) scale(.7);opacity:0}60%{opacity:1}100%{transform:none;opacity:1}}
+@keyframes fi{from{opacity:0}to{opacity:1}}
 .pc.flip{animation:flip .55s cubic-bezier(.2,.8,.2,1) both}
 input[type=range]{padding:0;height:36px;accent-color:#e3b95c;background:none;border:0}
 .lever{margin-top:10px;background:#0e1b15;border:1px solid var(--line);border-radius:14px;padding:8px 14px}
@@ -174,7 +175,10 @@ function draw(){if(!room)return;const g=room.game,isH=room.host==uid,ps=room.pla
  const list=Object.entries(ps).sort((a,b)=>a[1].t-b[1].t).map(x=>x[0]),ids=g&&!g.over?g.seats:list;
  $("#pot").textContent=g?"Банк: "+(g.pot+Object.values(g.bet).reduce((a,b)=>a+b,0)):room.sb+" / "+room.bb;
  $("#msg").textContent=g?g.msg||"":"Ждём игроков: "+list.length;
- const bd=$("#board");bd.innerHTML="";for(let i=0;i<5;i++){if(g&&g.board[i]!=null)bd.append(cd(g.board[i],"b"+g.hand+"-"+i,i<3?i*.12:0));else{const e=document.createElement("div");e.className="pc e";bd.append(e)}}
+ const ng=g?g.board.map((_,i)=>i).filter(i=>!seen.has("b"+g.hand+"-"+i)).map(i=>i<3?0:i-2):[],g0=Math.min(...ng),
+  bdl=i=>((i<3?0:i-2)-g0)*.9+(i<3?i*.15:0),after=ng.length?(Math.max(...ng)-g0)*.9+.8:0;
+ const mg=$("#msg");if(g&&g.over){if(!seen.has("o"+g.hand)){seen.add("o"+g.hand);mg.style.animation="fi .5s "+(after+.4)+"s both"}}else mg.style.animation="";
+ const bd=$("#board");bd.innerHTML="";for(let i=0;i<5;i++){if(g&&g.board[i]!=null)bd.append(cd(g.board[i],"b"+g.hand+"-"+i,bdl(i)));else{const e=document.createElement("div");e.className="pc e";bd.append(e)}}
  const box=$("#seats");box.innerHTML="";const all=g?g.seats:list;
  const mi=Math.max(0,all.indexOf(uid));
  all.forEach((id,i)=>{const p=ps[id]||{name:"—"},a=Math.PI/2+((i-mi+all.length)%all.length)*2*Math.PI/all.length,e=document.createElement("div");
@@ -183,7 +187,7 @@ function draw(){if(!room)return;const g=room.game,isH=room.host==uid,ps=room.pla
   const n=document.createElement("div");n.className="n";n.textContent=p.name+(room.host==id?" ★":"")+(g&&g.seats[g.di]==id?" Ⓓ":"");
   const s=document.createElement("div");s.className="s";s.textContent=g?(g.stack[id]??0):p.stack;e.append(av,n,s);
   if(g&&g.bet[id]){const b=document.createElement("div");b.className="b";b.textContent="ставка "+g.bet[id];e.append(b)}
-  if(g&&g.shown&&g.shown[id]){const r=document.createElement("div");r.style.cssText="display:flex;gap:2px;justify-content:center";g.shown[id].forEach((c,i)=>r.append(cd(c,"s"+g.hand+"-"+id+"-"+i,i*.12)));e.append(r)}
+  if(g&&g.shown&&g.shown[id]&&id!=uid){const r=document.createElement("div");r.style.cssText="display:flex;gap:2px;justify-content:center";g.shown[id].forEach((c,i)=>r.append(cd(c,"s"+g.hand+"-"+id+"-"+i,after+i*.12)));e.append(r)}
   box.append(e)});
  const m=$("#mine");m.innerHTML="";
  if(g&&g.seats.includes(uid)){if(hand&&hand.hand==g.hand)hand.cards.forEach((c,i)=>m.append(cd(c,"m"+g.hand+"-"+i,i*.15)));
