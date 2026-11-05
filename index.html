@@ -40,6 +40,12 @@ input:focus{border-color:var(--gold)}input.code{text-align:center;letter-spacing
 .row{display:flex;gap:8px}.row .btn{margin-top:8px}
 .rank{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}.rank i{color:var(--mut);font-style:normal}
 li{margin:5px 0;font-size:14px}ol{padding-left:20px;margin:4px 0}.hide{display:none}
+@keyframes flip{0%{transform:rotateY(90deg) translateY(-14px) scale(.7);opacity:0}60%{opacity:1}100%{transform:none;opacity:1}}
+.pc.flip{animation:flip .55s cubic-bezier(.2,.8,.2,1) both}
+input[type=range]{padding:0;height:36px;accent-color:#e3b95c;background:none;border:0}
+.lever{margin-top:10px;background:#0e1b15;border:1px solid var(--line);border-radius:14px;padding:8px 14px}
+.lv{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--mut)}.lv b{color:var(--gold);font-size:16px}
+.btn.a{background:linear-gradient(180deg,#e0605a,#a8342f);color:#fff}
 </style></head><body><div class="wrap">
 <h1>Poker <span>Night</span></h1>
 <div class="tabs" id="tabs"><button data-t="lobby" class="on">Лобби</button><button data-t="rules">Правила</button></div>
@@ -59,7 +65,8 @@ li{margin:5px 0;font-size:14px}ol{padding-left:20px;margin:4px 0}.hide{display:n
  <div class="table"><div class="felt"><div class="pot" id="pot"></div><div class="board" id="board"></div><div class="msg" id="msg"></div></div><div id="seats"></div></div>
  <div class="mine" id="mine"></div>
  <div id="bar" class="hide"><div class="row"><button class="btn r" id="fold">Fold</button><button class="btn g" id="call">Call</button></div>
-  <div class="row"><input id="amt" type="number" inputmode="numeric" placeholder="Рейз до…"><button class="btn" id="raise" style="width:40%">Raise</button></div></div>
+  <div class="lever"><div class="lv"><span id="lmin"></span><b id="lval"></b><span id="lmax"></span></div><input id="amt" type="range"></div>
+  <div class="row"><button class="btn" id="raise">Raise</button><button class="btn a" id="allin">All-in</button></div></div>
  <button class="btn" id="deal">Раздать карты</button>
  <button class="btn g" id="leave">Покинуть комнату</button>
 </section>
@@ -85,14 +92,14 @@ const firebaseConfig={apiKey:"AIzaSyALKxkssil6GsliCSI0WbvHrzgfOeti5us",authDomai
 
 const $=s=>document.querySelector(s), tg=window.Telegram&&window.Telegram.WebApp;
 if(tg){try{tg.ready();tg.expand()}catch(e){}}
-const app=initializeApp(firebaseConfig),au=getAuth(app),db=getFirestore(app);
 const BL=[[10,20],[25,50],[50,100],[100,200],[500,1000]];let bi=1,uid,code,room=null,G=null,hand=null,subs=[];const done={};
 const err=t=>$("#err").textContent=t||"";
 BL.forEach((b,i)=>{const c=document.createElement("div");c.className="chip"+(i==bi?" on":"");c.textContent=b[0]+" / "+b[1];c.onclick=()=>{bi=i;[...$("#blinds").children].forEach((x,j)=>x.classList.toggle("on",j==i))};$("#blinds").append(c)});
+let app,au,db;try{app=initializeApp(firebaseConfig);au=getAuth(app);db=getFirestore(app)}catch(e){err("Ошибка Firebase: "+(e.code||e.message))}
 try{$("#name").value=localStorage.getItem("pn")||(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user&&tg.initDataUnsafe.user.first_name)||""}catch(e){}
 function show(id){["lobby","room","rules"].forEach(x=>$("#"+x).classList.toggle("hide",x!=id));$("#tabs").classList.toggle("hide",id=="room");document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.t==id))}
 document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>show(b.dataset.t));
-signInAnonymously(au).then(r=>uid=r.user.uid).catch(()=>err("Не удалось войти в Firebase: проверьте конфиг и включите Anonymous Auth"));
+(au?signInAnonymously(au):Promise.reject()).then(r=>uid=r.user.uid).catch(()=>err("Не удалось войти в Firebase: проверьте конфиг и включите Anonymous Auth"));
 
 // ---------- честная колода: криптографический RNG, без смещения ----------
 function rnd(n){const m=Math.floor(2**32/n)*n;let x;do{x=crypto.getRandomValues(new Uint32Array(1))[0]}while(x>=m);return x%n}
@@ -117,7 +124,7 @@ $("#join").onclick=async()=>{const c=$("#code").value.trim().toUpperCase(),w=who
  try{const r=doc(db,"rooms",c),s=await getDoc(r);if(!s.exists())return err("Комната не найдена");const d=s.data();
   if(!d.players[uid]){if(Object.keys(d.players).length>=9)return err("Комната заполнена (макс. 9)");if(w.stack<d.bb*10)return err("Стек не меньше 10 BB ("+d.bb*10+")");await updateDoc(r,{["players."+uid]:w})}
   enter(c)}catch(e){err("Не удалось войти: "+e.code)}};
-function enter(c){code=c;show("room");$("#rc").textContent=c;
+function enter(c){code=c;seen.clear();show("room");$("#rc").textContent=c;
  subs.push(onSnapshot(doc(db,"rooms",c),s=>{room=s.data();if(!room)return;if(room.host==uid&&!G&&room.game&&!room.game.over)err("Хост перезагрузил страницу — раздача прервана, начните новую");draw()}));
  subs.push(onSnapshot(doc(db,"rooms",c,"hands",uid),s=>{hand=s.exists()?s.data():null;draw()},e=>err("Нет доступа к картам: "+e.code)));
  subs.push(onSnapshot(collection(db,"rooms",c,"actions"),sn=>{sn.docChanges().forEach(ch=>{const a=ch.doc.data(),u=ch.doc.id;if(room&&room.host==uid&&G&&done[u]!==a.n){done[u]=a.n;handle(u,a)}})}))}
@@ -134,7 +141,7 @@ $("#deal").onclick=async()=>{const d=room,ps=Object.entries(d.players).sort((a,b
  const g={hand:(pv.hand||0)+1,seq:0,seats,di,stack:st,bet:{},folded:{},acted:{},cur:d.bb,minRaise:d.bb,pot:0,board:[],stage:"pre",bb:d.bb,turn:seats[first],over:false,shown:null,msg:"Новая раздача"};
  pay(g,seats[sbI],d.sb);pay(g,seats[bbI],d.bb);G={pub:g,deck,hole};
  await Promise.all(seats.map(u=>setDoc(doc(db,"rooms",code,"hands",u),{hand:g.hand,cards:hole[u]})));await push()};
-function end(g,ws,txt){const sh=Math.floor(g.pot/ws.length);ws.forEach((w,i)=>g.stack[w]+=sh+(i==0?g.pot-sh*ws.length:0));g.over=true;g.stage="show";g.turn=null;g.msg=txt+" · банк "+g.pot;}
+function end(g,ws,txt){const P=g.pot,sh=Math.floor(P/ws.length);ws.forEach((w,i)=>g.stack[w]+=sh+(i==0?P-sh*ws.length:0));g.pot=0;g.over=true;g.stage="show";g.turn=null;g.msg=txt+" · банк "+P}
 function showdown(g){const act=g.seats.filter(u=>!g.folded[u]),sc={};act.forEach(u=>sc[u]=best([...G.hole[u],...g.board]));
  let b=null;act.forEach(u=>{if(!b||cmp(sc[u],b)>0)b=sc[u]});const ws=act.filter(u=>cmp(sc[u],b)==0);g.shown={};act.forEach(u=>g.shown[u]=G.hole[u]);
  end(g,ws,"Победа: "+ws.map(u=>room.players[u]?.name||"?").join(", ")+" ("+HN[b[0]]+")")}
@@ -151,20 +158,23 @@ function handle(u,a){const g=G.pub;if(g.over||u!==g.turn||a.seq!==g.seq)return;c
  if(act.length==1||can.every(x=>(g.bet[x]||0)==g.cur&&(g.acted[x]||can.length<2)))round(g);
  else{const n=g.seats.length;let i=g.seats.indexOf(u);do{i=(i+1)%n}while(g.folded[g.seats[i]]||g.stack[g.seats[i]]==0);g.turn=g.seats[i]}
  push()}
-const send=t=>setDoc(doc(db,"rooms",code,"actions",uid),{t,amt:+$("#amt").value||0,seq:room.game.seq,n:Date.now()});
-$("#fold").onclick=()=>send("fold");$("#call").onclick=()=>send("call");$("#raise").onclick=()=>send("raise");
+const send=(t,amt)=>setDoc(doc(db,"rooms",code,"actions",uid),{t,amt:amt??(+$("#amt").value||0),seq:room.game.seq,n:Date.now()});
+$("#fold").onclick=()=>send("fold");$("#call").onclick=()=>send("call");$("#raise").onclick=()=>send("raise");$("#allin").onclick=()=>send("raise",1e9);
+$("#amt").oninput=()=>$("#lval").textContent="Рейз до "+$("#amt").value;
 // ---------- догрузка карт, если пришли с задержкой ----------
 const tr={};let ft=0;
 function fetchHand(h){if(ft||(tr[h]=(tr[h]||0)+1)>6)return;
  ft=setTimeout(async()=>{ft=0;try{const s=await getDocFromServer(doc(db,"rooms",code,"hands",uid));if(s.exists()&&s.data().hand==h){hand=s.data();draw()}else fetchHand(h)}catch(e){fetchHand(h)}},tr[h]*600)}
 // ---------- отрисовка ----------
 const rk=r=>r<=10?r:"JQKA"[r-11],SU="♣♦♥♠";
-const cd=c=>{const e=document.createElement("div"),x=C(c);e.className="pc"+(x.s==1||x.s==2?" red":"");e.textContent=rk(x.r)+SU[x.s];return e};
+const seen=new Set();
+const cd=(c,key,dl=0)=>{const e=document.createElement("div"),x=C(c);e.className="pc"+(x.s==1||x.s==2?" red":"");e.textContent=rk(x.r)+SU[x.s];
+ if(key&&!seen.has(key)){seen.add(key);e.classList.add("flip");e.style.animationDelay=dl+"s"}return e};
 function draw(){if(!room)return;const g=room.game,isH=room.host==uid,ps=room.players;
  const list=Object.entries(ps).sort((a,b)=>a[1].t-b[1].t).map(x=>x[0]),ids=g&&!g.over?g.seats:list;
  $("#pot").textContent=g?"Банк: "+(g.pot+Object.values(g.bet).reduce((a,b)=>a+b,0)):room.sb+" / "+room.bb;
  $("#msg").textContent=g?g.msg||"":"Ждём игроков: "+list.length;
- const bd=$("#board");bd.innerHTML="";for(let i=0;i<5;i++){if(g&&g.board[i]!=null)bd.append(cd(g.board[i]));else{const e=document.createElement("div");e.className="pc e";bd.append(e)}}
+ const bd=$("#board");bd.innerHTML="";for(let i=0;i<5;i++){if(g&&g.board[i]!=null)bd.append(cd(g.board[i],"b"+g.hand+"-"+i,i<3?i*.12:0));else{const e=document.createElement("div");e.className="pc e";bd.append(e)}}
  const box=$("#seats");box.innerHTML="";const all=g?g.seats:list;
  const mi=Math.max(0,all.indexOf(uid));
  all.forEach((id,i)=>{const p=ps[id]||{name:"—"},a=Math.PI/2+((i-mi+all.length)%all.length)*2*Math.PI/all.length,e=document.createElement("div");
@@ -173,13 +183,17 @@ function draw(){if(!room)return;const g=room.game,isH=room.host==uid,ps=room.pla
   const n=document.createElement("div");n.className="n";n.textContent=p.name+(room.host==id?" ★":"")+(g&&g.seats[g.di]==id?" Ⓓ":"");
   const s=document.createElement("div");s.className="s";s.textContent=g?(g.stack[id]??0):p.stack;e.append(av,n,s);
   if(g&&g.bet[id]){const b=document.createElement("div");b.className="b";b.textContent="ставка "+g.bet[id];e.append(b)}
-  if(g&&g.shown&&g.shown[id]){const r=document.createElement("div");r.style.cssText="display:flex;gap:2px;justify-content:center";g.shown[id].forEach(c=>r.append(cd(c)));e.append(r)}
+  if(g&&g.shown&&g.shown[id]){const r=document.createElement("div");r.style.cssText="display:flex;gap:2px;justify-content:center";g.shown[id].forEach((c,i)=>r.append(cd(c,"s"+g.hand+"-"+id+"-"+i,i*.12)));e.append(r)}
   box.append(e)});
  const m=$("#mine");m.innerHTML="";
- if(g&&g.seats.includes(uid)){if(hand&&hand.hand==g.hand)hand.cards.forEach(c=>m.append(cd(c)));
+ if(g&&g.seats.includes(uid)){if(hand&&hand.hand==g.hand)hand.cards.forEach((c,i)=>m.append(cd(c,"m"+g.hand+"-"+i,i*.15)));
   else{for(let i=0;i<2;i++){const b=document.createElement("div");b.className="pc back";m.append(b)}fetchHand(g.hand)}}
  const my=g&&g.turn==uid;$("#bar").classList.toggle("hide",!my);
- if(my){const to=g.cur-(g.bet[uid]||0);$("#call").textContent=to?"Call "+Math.min(to,g.stack[uid]):"Check";$("#amt").placeholder="Рейз до (мин "+(g.cur+g.minRaise)+")"}
+ if(my){const to=g.cur-(g.bet[uid]||0),cap=Math.min(...g.seats.filter(x=>x!=uid&&!g.folded[x]).map(x=>g.stack[x]+(g.bet[x]||0))),mx=Math.min(g.stack[uid]+(g.bet[uid]||0),cap),mn=Math.min(g.cur+g.minRaise,mx),can=mx>g.cur,a=$("#amt");
+  $("#call").textContent=to?"Call "+Math.min(to,g.stack[uid]):"Check";
+  ["#raise","#allin",".lever"].forEach(q=>$(q).classList.toggle("hide",!can));
+  const k=g.hand+"|"+g.seq;if(can&&a.dataset.k!=k){a.dataset.k=k;a.min=mn;a.max=mx;a.step=Math.max(1,Math.floor(g.bb/2));a.value=mn;$("#lmin").textContent=mn;$("#lmax").textContent=mx}
+  if(can){$("#lval").textContent="Рейз до "+a.value;$("#allin").textContent="All-in "+mx}}
  $("#deal").classList.toggle("hide",!isH||(g&&!g.over));$("#deal").textContent=g?"Следующая раздача":"Раздать карты";
  if(isH&&!G&&g&&g.over){G={pub:g}}}
 </script></body></html>
